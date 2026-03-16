@@ -1,0 +1,1820 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import { VitePWA } from 'vite-plugin-pwa'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [
+    react(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['icon.svg'],
+      manifest: {
+        name: 'Aprende Jugando',
+        short_name: 'Aprende',
+        description: 'Mini-lecciones y juegos para niños.',
+        theme_color: '#7C3AED',
+        background_color: '#FFF7ED',
+        display: 'standalone',
+        lang: 'es',
+        scope: '/',
+        start_url: '/',
+        icons: [
+          {
+            src: '/icon.svg',
+            sizes: 'any',
+            type: 'image/svg+xml',
+            purpose: 'any maskable',
+          },
+        ],
+      },
+    }),
+  ],
+})
+
+_________________________
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Aprende jugando: temas, mini-lecciones y quizzes para niños." />
+    <meta name="theme-color" content="#7C3AED" />
+    <title>Aprende Jugando</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
+
+
+__________________________--
+import { useMemo, useState } from 'react'
+import { TOPICS, type TopicId } from './content/topics'
+import { loadProgress, saveProgress, type ProgressState } from './lib/progress'
+import { HomeScreen } from './screens/HomeScreen'
+import { LessonScreen } from './screens/LessonScreen'
+import { QuizScreen } from './screens/QuizScreen'
+import { TopicScreen } from './screens/TopicScreen'
+
+type Route =
+  | { name: 'home' }
+  | { name: 'topic'; topicId: TopicId }
+  | { name: 'lesson'; topicId: TopicId; lessonId: string }
+  | { name: 'quiz'; topicId: TopicId }
+
+export default function App() {
+  const [route, setRoute] = useState<Route>({ name: 'home' })
+  const [progress, setProgress] = useState<ProgressState>(() => loadProgress())
+
+  const topicsById = useMemo(() => {
+    return new Map(TOPICS.map((t) => [t.id, t]))
+  }, [])
+
+  function updateProgress(next: ProgressState) {
+    setProgress(next)
+    saveProgress(next)
+  }
+
+  return (
+    <div className="appShell">
+      <header className="topBar">
+        <button
+          className="ghostBtn"
+          onClick={() => setRoute({ name: 'home' })}
+          aria-label="Volver al inicio"
+        >
+          Aprende Jugando
+        </button>
+        <div className="topBarRight">
+          <span className="pill" title="Progreso guardado en el dispositivo">
+            Progreso: {progress.completedLessonIds.length} lecciones
+          </span>
+        </div>
+      </header>
+
+      <main className="content">
+        {route.name === 'home' && (
+          <HomeScreen
+            topics={TOPICS}
+            progress={progress}
+            onOpenTopic={(topicId) => setRoute({ name: 'topic', topicId })}
+            onReset={() =>
+              updateProgress({ completedLessonIds: [], bestQuizScoreByTopic: {} })
+            }
+          />
+        )}
+
+        {route.name === 'topic' && (
+          <TopicScreen
+            topic={topicsById.get(route.topicId)!}
+            progress={progress}
+            onBack={() => setRoute({ name: 'home' })}
+            onOpenLesson={(lessonId) =>
+              setRoute({ name: 'lesson', topicId: route.topicId, lessonId })
+            }
+            onStartQuiz={() => setRoute({ name: 'quiz', topicId: route.topicId })}
+          />
+        )}
+
+        {route.name === 'lesson' && (
+          <LessonScreen
+            topic={topicsById.get(route.topicId)!}
+            lessonId={route.lessonId}
+            progress={progress}
+            onBack={() => setRoute({ name: 'topic', topicId: route.topicId })}
+            onComplete={() => {
+              if (progress.completedLessonIds.includes(route.lessonId)) return
+              updateProgress({
+                ...progress,
+                completedLessonIds: [...progress.completedLessonIds, route.lessonId],
+              })
+            }}
+          />
+        )}
+
+        {route.name === 'quiz' && (
+          <QuizScreen
+            topic={topicsById.get(route.topicId)!}
+            progress={progress}
+            onBack={() => setRoute({ name: 'topic', topicId: route.topicId })}
+            onFinish={(score, total) => {
+              const best = progress.bestQuizScoreByTopic[route.topicId]
+              const nextBest =
+                !best || score / total > best.score / best.total
+                  ? { score, total }
+                  : best
+              updateProgress({
+                ...progress,
+                bestQuizScoreByTopic: {
+                  ...progress.bestQuizScoreByTopic,
+                  [route.topicId]: nextBest,
+                },
+              })
+            }}
+          />
+        )}
+      </main>
+
+      <footer className="footer">
+        Hecho para aprender con calma, sin anuncios.
+      </footer>
+    </div>
+  )
+}
+______________________________________----
+
+
+
+
+
+export type TopicId = 'colores' | 'numeros' | 'animales'
+
+export type QuizQuestion = {
+  id: string
+  prompt: string
+  options: string[]
+  answerIndex: number
+  helper?: string
+}
+
+export type Lesson = {
+  id: string
+  title: string
+  reading: { title: string; body: string }[]
+  miniPractice?: { prompt: string; answer: string }[]
+}
+
+export type Topic = {
+  id: TopicId
+  title: string
+  emoji: string
+  description: string
+  lessons: Lesson[]
+  quiz: QuizQuestion[]
+}
+
+export const TOPICS: Topic[] = [
+  {
+    id: 'colores',
+    title: 'Colores',
+    emoji: '🎨',
+    description: 'Aprende colores con ejemplos sencillos.',
+    lessons: [
+      {
+        id: 'colores-primarios',
+        title: 'Colores básicos',
+        reading: [
+          {
+            title: '¿Qué es un color?',
+            body: 'Los colores están en todas partes: en tu ropa, en el cielo y en las flores.',
+          },
+          {
+            title: 'Ejemplos',
+            body: 'Rojo como una manzana. Azul como el cielo. Amarillo como el sol.',
+          },
+        ],
+        miniPractice: [
+          { prompt: 'Completa: el sol es de color…', answer: 'amarillo' },
+          { prompt: 'Completa: el cielo es de color…', answer: 'azul' },
+        ],
+      },
+      {
+        id: 'colores-mezclas',
+        title: 'Mezclas divertidas',
+        reading: [
+          {
+            title: 'Mezclar',
+            body: 'Si mezclas colores, aparecen colores nuevos. ¡Es como magia!',
+          },
+          {
+            title: 'Ejemplos',
+            body: 'Azul + amarillo = verde. Rojo + amarillo = naranja.',
+          },
+        ],
+      },
+    ],
+    quiz: [
+      {
+        id: 'c1',
+        prompt: '¿De qué color es el sol (normalmente)?',
+        options: ['Azul', 'Amarillo', 'Verde'],
+        answerIndex: 1,
+      },
+      {
+        id: 'c2',
+        prompt: 'Azul + amarillo = …',
+        options: ['Morado', 'Verde', 'Naranja'],
+        answerIndex: 1,
+      },
+      {
+        id: 'c3',
+        prompt: 'Rojo + amarillo = …',
+        options: ['Naranja', 'Blanco', 'Negro'],
+        answerIndex: 0,
+      },
+    ],
+  },
+  {
+    id: 'numeros',
+    title: 'Números',
+    emoji: '🔢',
+    description: 'Cuenta y reconoce cantidades.',
+    lessons: [
+      {
+        id: 'numeros-1-5',
+        title: 'Del 1 al 5',
+        reading: [
+          {
+            title: 'Contar',
+            body: 'Contar es decir los números en orden: 1, 2, 3, 4, 5…',
+          },
+          {
+            title: 'Ejemplos',
+            body: 'Si tienes 2 manzanas, eso es “dos”. Si tienes 5 lápices, eso es “cinco”.',
+          },
+        ],
+        miniPractice: [
+          { prompt: 'Después del 2 viene el…', answer: '3' },
+          { prompt: 'Antes del 5 está el…', answer: '4' },
+        ],
+      },
+      {
+        id: 'numeros-sumas',
+        title: 'Sumas fáciles',
+        reading: [
+          {
+            title: 'Sumar',
+            body: 'Sumar es juntar. Si tienes 1 galleta y te dan 1 más, ahora tienes 2.',
+          },
+        ],
+      },
+    ],
+    quiz: [
+      {
+        id: 'n1',
+        prompt: '¿Qué número viene después del 3?',
+        options: ['2', '4', '5'],
+        answerIndex: 1,
+      },
+      {
+        id: 'n2',
+        prompt: '1 + 1 = …',
+        options: ['1', '2', '3'],
+        answerIndex: 1,
+      },
+      {
+        id: 'n3',
+        prompt: '2 + 1 = …',
+        options: ['3', '4', '2'],
+        answerIndex: 0,
+      },
+    ],
+  },
+  {
+    id: 'animales',
+    title: 'Animales',
+    emoji: '🦁',
+    description: 'Animales y dónde viven.',
+    lessons: [
+      {
+        id: 'animales-casa',
+        title: 'Animales de casa',
+        reading: [
+          {
+            title: 'Mascotas',
+            body: 'Algunos animales viven con las personas: perros y gatos, por ejemplo.',
+          },
+        ],
+        miniPractice: [{ prompt: '¿Quién dice “miau”?', answer: 'gato' }],
+      },
+      {
+        id: 'animales-selva',
+        title: 'Animales de la selva',
+        reading: [
+          {
+            title: 'Selva',
+            body: 'En la selva viven animales como el mono, el tigre y el jaguar.',
+          },
+        ],
+      },
+    ],
+    quiz: [
+      {
+        id: 'a1',
+        prompt: '¿Qué animal dice “miau”?',
+        options: ['Perro', 'Gato', 'Vaca'],
+        answerIndex: 1,
+      },
+      {
+        id: 'a2',
+        prompt: '¿Cuál es un animal de la selva?',
+        options: ['Tigre', 'Gallina', 'Pez payaso'],
+        answerIndex: 0,
+      },
+    ],
+  },
+]
+
+___________________________________-
+
+
+
+import type { TopicId } from '../content/topics'
+
+const STORAGE_KEY = 'aprende-jugando:progress:v1'
+
+export type BestQuizScore = { score: number; total: number }
+
+export type ProgressState = {
+  completedLessonIds: string[]
+  bestQuizScoreByTopic: Partial<Record<TopicId, BestQuizScore>>
+}
+
+const DEFAULT_STATE: ProgressState = {
+  completedLessonIds: [],
+  bestQuizScoreByTopic: {},
+}
+
+export function loadProgress(): ProgressState {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return DEFAULT_STATE
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object') return DEFAULT_STATE
+
+    const obj = parsed as Partial<ProgressState>
+    const completedLessonIds = Array.isArray(obj.completedLessonIds)
+      ? obj.completedLessonIds.filter((x): x is string => typeof x === 'string')
+      : []
+    const bestQuizScoreByTopic =
+      obj.bestQuizScoreByTopic && typeof obj.bestQuizScoreByTopic === 'object'
+        ? (obj.bestQuizScoreByTopic as ProgressState['bestQuizScoreByTopic'])
+        : {}
+
+    return { completedLessonIds, bestQuizScoreByTopic }
+  } catch {
+    return DEFAULT_STATE
+  }
+}
+
+export function saveProgress(state: ProgressState) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+}
+
+
+
+
+_____________________________-
+
+
+
+
+import type { Topic, TopicId } from '../content/topics'
+import type { ProgressState } from '../lib/progress'
+
+export function HomeScreen(props: {
+  topics: Topic[]
+  progress: ProgressState
+  onOpenTopic: (topicId: TopicId) => void
+  onReset: () => void
+}) {
+  return (
+    <section className="screen">
+      <div className="heroCard">
+        <div className="heroLeft">
+          <h1 className="h1">Aprende Jugando</h1>
+          <p className="lead">
+            Elige un tema, lee una mini-lección y juega un quiz.
+          </p>
+        </div>
+        <div className="heroRight" aria-hidden="true">
+          <div className="sticker">⭐</div>
+          <div className="sticker">🧠</div>
+          <div className="sticker">🏆</div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="row">
+          <h2 className="h2">Temas</h2>
+          <button className="dangerBtn" onClick={props.onReset}>
+            Reiniciar progreso
+          </button>
+        </div>
+
+        <div className="grid">
+          {props.topics.map((t) => {
+            const best = props.progress.bestQuizScoreByTopic[t.id]
+            const bestText = best ? `${best.score}/${best.total}` : '—'
+            return (
+              <button
+                key={t.id}
+                className="topicCard"
+                onClick={() => props.onOpenTopic(t.id)}
+              >
+                <div className="topicTop">
+                  <div className="topicEmoji" aria-hidden="true">
+                    {t.emoji}
+                  </div>
+                  <div className="topicTitleWrap">
+                    <div className="topicTitle">{t.title}</div>
+                    <div className="topicDesc">{t.description}</div>
+                  </div>
+                </div>
+
+                <div className="topicStats">
+                  <span className="pill">Lecciones: {t.lessons.length}</span>
+                  <span className="pill">Mejor quiz: {bestText}</span>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+
+
+____________________________
+
+
+
+import type { Topic } from '../content/topics'
+import type { ProgressState } from '../lib/progress'
+
+export function TopicScreen(props: {
+  topic: Topic
+  progress: ProgressState
+  onBack: () => void
+  onOpenLesson: (lessonId: string) => void
+  onStartQuiz: () => void
+}) {
+  const best = props.progress.bestQuizScoreByTopic[props.topic.id]
+  const bestText = best ? `${best.score}/${best.total}` : '—'
+
+  return (
+    <section className="screen">
+      <div className="card">
+        <div className="row">
+          <button className="ghostBtn" onClick={props.onBack}>
+            ← Inicio
+          </button>
+          <span className="pill">Mejor quiz: {bestText}</span>
+        </div>
+
+        <div className="topicHeader">
+          <div className="topicEmojiBig" aria-hidden="true">
+            {props.topic.emoji}
+          </div>
+          <div>
+            <h1 className="h1">{props.topic.title}</h1>
+            <p className="lead">{props.topic.description}</p>
+          </div>
+        </div>
+
+        <div className="row" style={{ marginTop: 12 }}>
+          <h2 className="h2">Lecciones</h2>
+          <button className="primaryBtn" onClick={props.onStartQuiz}>
+            Jugar quiz
+          </button>
+        </div>
+
+        <div className="list">
+          {props.topic.lessons.map((l) => {
+            const done = props.progress.completedLessonIds.includes(l.id)
+            return (
+              <button
+                key={l.id}
+                className="listItem"
+                onClick={() => props.onOpenLesson(l.id)}
+              >
+                <div className="listItemLeft">
+                  <div className={done ? 'badgeOk' : 'badge'}>{done ? '✓' : '•'}</div>
+                  <div>
+                    <div className="listTitle">{l.title}</div>
+                    <div className="listSub">
+                      {l.reading.length} parte(s)
+                      {l.miniPractice?.length ? ` · práctica` : ''}
+                    </div>
+                  </div>
+                </div>
+                <span className="pill">Abrir</span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+______________________________
+
+
+
+
+import { useMemo, useState } from 'react'
+import type { Lesson, Topic } from '../content/topics'
+import type { ProgressState } from '../lib/progress'
+
+function normalize(s: string) {
+  return s.trim().toLowerCase()
+}
+
+export function LessonScreen(props: {
+  topic: Topic
+  lessonId: string
+  progress: ProgressState
+  onBack: () => void
+  onComplete: () => void
+}) {
+  const lesson = useMemo<Lesson>(() => {
+    const found = props.topic.lessons.find((l) => l.id === props.lessonId)
+    if (!found) throw new Error('Lesson not found')
+    return found
+  }, [props.lessonId, props.topic.lessons])
+
+  const completed = props.progress.completedLessonIds.includes(lesson.id)
+  const [answers, setAnswers] = useState<Record<number, string>>({})
+
+  const practiceOkCount = useMemo(() => {
+    if (!lesson.miniPractice?.length) return 0
+    return lesson.miniPractice.reduce((acc, item, idx) => {
+      const v = answers[idx]
+      if (!v) return acc
+      return normalize(v) === normalize(item.answer) ? acc + 1 : acc
+    }, 0)
+  }, [answers, lesson.miniPractice])
+
+  return (
+    <section className="screen">
+      <div className="card">
+        <div className="row">
+          <button className="ghostBtn" onClick={props.onBack}>
+            ← {props.topic.title}
+          </button>
+          <span className="pill">{completed ? 'Lección completada ✓' : 'Lección'}</span>
+        </div>
+
+        <h1 className="h1">{lesson.title}</h1>
+
+        <div className="reading">
+          {lesson.reading.map((part, idx) => (
+            <div key={idx} className="readingPart">
+              <h2 className="h2">{part.title}</h2>
+              <p className="p">{part.body}</p>
+            </div>
+          ))}
+        </div>
+
+        {lesson.miniPractice?.length ? (
+          <div className="practice">
+            <h2 className="h2">Mini práctica</h2>
+            <p className="p">
+              Intenta responder. No pasa nada si te equivocas: ¡aprendemos!
+            </p>
+
+            <div className="practiceList">
+              {lesson.miniPractice.map((q, idx) => {
+                const v = answers[idx] ?? ''
+                const ok = v ? normalize(v) === normalize(q.answer) : null
+                return (
+                  <div key={idx} className="practiceItem">
+                    <div className="practicePrompt">{q.prompt}</div>
+                    <div className="practiceRow">
+                      <input
+                        className="input"
+                        value={v}
+                        placeholder="Escribe aquí…"
+                        onChange={(e) =>
+                          setAnswers((prev) => ({ ...prev, [idx]: e.target.value }))
+                        }
+                      />
+                      <span className={ok === true ? 'pillOk' : ok === false ? 'pillBad' : 'pill'}>
+                        {ok === true ? 'Bien' : ok === false ? 'Intenta de nuevo' : '—'}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="row" style={{ marginTop: 12 }}>
+              <span className="pill">
+                Aciertos: {practiceOkCount}/{lesson.miniPractice.length}
+              </span>
+              <button className="primaryBtn" onClick={props.onComplete}>
+                Marcar como completada
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="row" style={{ marginTop: 12 }}>
+            <span className="pill">Sin práctica en esta lección</span>
+            <button className="primaryBtn" onClick={props.onComplete}>
+              Marcar como completada
+            </button>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+
+
+
+___________________________________
+
+
+
+import { useMemo, useState } from 'react'
+import type { QuizQuestion, Topic } from '../content/topics'
+import type { ProgressState } from '../lib/progress'
+
+type AnswerState = Record<string, number>
+
+function scoreQuiz(questions: QuizQuestion[], answers: AnswerState) {
+  return questions.reduce((acc, q) => {
+    const a = answers[q.id]
+    return acc + (a === q.answerIndex ? 1 : 0)
+  }, 0)
+}
+
+export function QuizScreen(props: {
+  topic: Topic
+  progress: ProgressState
+  onBack: () => void
+  onFinish: (score: number, total: number) => void
+}) {
+  const questions = props.topic.quiz
+  const [answers, setAnswers] = useState<AnswerState>({})
+  const [submitted, setSubmitted] = useState(false)
+
+  const score = useMemo(() => scoreQuiz(questions, answers), [answers, questions])
+  const total = questions.length
+  const doneCount = Object.keys(answers).length
+
+  const best = props.progress.bestQuizScoreByTopic[props.topic.id]
+  const bestText = best ? `${best.score}/${best.total}` : '—'
+
+  return (
+    <section className="screen">
+      <div className="card">
+        <div className="row">
+          <button className="ghostBtn" onClick={props.onBack}>
+            ← {props.topic.title}
+          </button>
+          <span className="pill">Mejor: {bestText}</span>
+        </div>
+
+        <div className="topicHeader">
+          <div className="topicEmojiBig" aria-hidden="true">
+            {props.topic.emoji}
+          </div>
+          <div>
+            <h1 className="h1">Quiz de {props.topic.title}</h1>
+            <p className="lead">Responde y luego toca “Terminar”.</p>
+          </div>
+        </div>
+
+        <div className="quizMeta">
+          <span className="pill">
+            Respondidas: {doneCount}/{total}
+          </span>
+          {submitted ? (
+            <span className={score / total >= 0.8 ? 'pillOk' : 'pill'}>
+              Puntos: {score}/{total}
+            </span>
+          ) : (
+            <span className="pill">Puntos: —</span>
+          )}
+        </div>
+
+        <div className="quizList">
+          {questions.map((q, idx) => {
+            const selected = answers[q.id]
+            const show = submitted
+            return (
+              <div key={q.id} className="quizQ">
+                <div className="quizPrompt">
+                  <span className="badge">{idx + 1}</span> {q.prompt}
+                </div>
+                <div className="quizOptions">
+                  {q.options.map((opt, oi) => {
+                    const isSelected = selected === oi
+                    const isRight = show && oi === q.answerIndex
+                    const isWrongSelected = show && isSelected && oi !== q.answerIndex
+                    const className = isRight
+                      ? 'opt optRight'
+                      : isWrongSelected
+                        ? 'opt optWrong'
+                        : isSelected
+                          ? 'opt optSelected'
+                          : 'opt'
+                    return (
+                      <button
+                        key={oi}
+                        className={className}
+                        onClick={() => {
+                          if (submitted) return
+                          setAnswers((prev) => ({ ...prev, [q.id]: oi }))
+                        }}
+                        aria-pressed={isSelected}
+                      >
+                        {opt}
+                      </button>
+                    )
+                  })}
+                </div>
+                {submitted && q.helper ? <div className="hint">{q.helper}</div> : null}
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="row" style={{ marginTop: 12 }}>
+          <button
+            className="secondaryBtn"
+            onClick={() => {
+              setAnswers({})
+              setSubmitted(false)
+            }}
+          >
+            Reiniciar quiz
+          </button>
+          <button
+            className="primaryBtn"
+            onClick={() => {
+              setSubmitted(true)
+              props.onFinish(score, total)
+            }}
+            disabled={doneCount !== total}
+          >
+            Terminar
+          </button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+
+
+
+
+___________________________________________
+
+
+
+
+
+:root {
+  --bg: #fff7ed;
+  --card: #ffffff;
+  --text: #0f172a;
+  --muted: #475569;
+  --border: rgba(15, 23, 42, 0.12);
+  --shadow: rgba(2, 6, 23, 0.12) 0 10px 20px;
+  --primary: #7c3aed;
+  --primary2: #22c55e;
+  --danger: #ef4444;
+  --ok: #16a34a;
+  --bad: #dc2626;
+
+  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+
+  font: 16px/150% var(--sans);
+  color: var(--text);
+  background: var(--bg);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+.appShell {
+  min-height: 100svh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+.topBar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: rgba(255, 247, 237, 0.85);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+}
+
+.topBarRight {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.content {
+  padding: 14px;
+  max-width: 980px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.footer {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  padding: 12px 14px;
+  font-size: 13px;
+  text-align: center;
+}
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 14px;
+}
+
+.heroCard {
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.14), rgba(34, 197, 94, 0.14));
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 16px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.heroRight {
+  display: flex;
+  gap: 8px;
+}
+
+.sticker {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid var(--border);
+  font-size: 22px;
+}
+
+.h1 {
+  font-size: 26px;
+  margin: 0 0 6px;
+  letter-spacing: -0.3px;
+}
+
+.h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.lead {
+  margin: 0;
+  color: var(--muted);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.pillOk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(22, 163, 74, 0.35);
+  border-color: rgba(22, 163, 74, 0.35);
+  background: rgba(22, 163, 74, 0.12);
+  color: var(--ok);
+  font-size: 13px;
+}
+
+.pillBad {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(220, 38, 38, 0.35);
+  border-color: rgba(220, 38, 38, 0.35);
+  background: rgba(220, 38, 38, 0.12);
+  color: var(--bad);
+  font-size: 13px;
+}
+
+button {
+  font: inherit;
+}
+
+.primaryBtn,
+.secondaryBtn,
+.ghostBtn,
+.dangerBtn {
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  background: white;
+  cursor: pointer;
+}
+
+.primaryBtn {
+  border-color: rgba(124, 58, 237, 0.35);
+  background: rgba(124, 58, 237, 0.12);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.secondaryBtn {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.ghostBtn {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+  font-weight: 700;
+  padding: 8px 10px;
+}
+
+.dangerBtn {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.primaryBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.topicCard {
+  grid-column: span 12;
+  text-align: left;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.85);
+  padding: 12px;
+  cursor: pointer;
+}
+
+@media (min-width: 680px) {
+  .topicCard {
+    grid-column: span 6;
+  }
+}
+
+.topicTop {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.topicEmoji {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.1), rgba(34, 197, 94, 0.1));
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+}
+
+.topicTitle {
+  font-weight: 800;
+  letter-spacing: -0.2px;
+}
+
+.topicDesc {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.topicStats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.topicHeader {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.topicEmojiBig {
+  width: 60px;
+  height: 60px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.7);
+  display: grid;
+  place-items: center;
+  font-size: 32px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.listItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+}
+
+.listItemLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.badge,
+.badgeOk {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.badgeOk {
+  border-color: rgba(22, 163, 74, 0.35);
+  background: rgba(22, 163, 74, 0.12);
+  color: var(--ok);
+}
+
+.listTitle {
+  font-weight: 750;
+}
+
+.listSub {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.reading {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.readingPart {
+  border: 1px dashed rgba(15, 23, 42, 0.18);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.practice {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.practiceList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.practiceItem {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.practicePrompt {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.practiceRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.input {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  background: white;
+}
+
+.quizMeta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.quizList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.quizQ {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.quizPrompt {
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.quizOptions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+@media (min-width: 680px) {
+  .quizOptions {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.opt {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: white;
+  cursor: pointer;
+  text-align: center;
+}
+
+.optSelected {
+  border-color: rgba(124, 58, 237, 0.35);
+  background: rgba(124, 58, 237, 0.12);
+}
+
+.optRight {
+  border-color: rgba(22, 163, 74, 0.35);
+  background: rgba(22, 163, 74, 0.12);
+}
+
+.optWrong {
+  border-color: rgba(220, 38, 38, 0.35);
+  background: rgba(220, 38, 38, 0.12);
+}
+
+.hint {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+
+
+_________________________________
+
+
+
+
+
+
+
+:root {
+  --bg: #fff7ed;
+  --card: #ffffff;
+  --text: #0f172a;
+  --muted: #475569;
+  --border: rgba(15, 23, 42, 0.12);
+  --shadow: rgba(2, 6, 23, 0.12) 0 10px 20px;
+  --primary: #7c3aed;
+  --primary2: #22c55e;
+  --danger: #ef4444;
+  --ok: #16a34a;
+  --bad: #dc2626;
+
+  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+
+  font: 16px/150% var(--sans);
+  color: var(--text);
+  background: var(--bg);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+.appShell {
+  min-height: 100svh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+.topBar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: rgba(255, 247, 237, 0.85);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+}
+
+.topBarRight {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.content {
+  padding: 14px;
+  max-width: 980px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.footer {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  padding: 12px 14px;
+  font-size: 13px;
+  text-align: center;
+}
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 14px;
+}
+
+.heroCard {
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.14), rgba(34, 197, 94, 0.14));
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 16px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.heroRight {
+  display: flex;
+  gap: 8px;
+}
+
+.sticker {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid var(--border);
+  font-size: 22px;
+}
+
+.h1 {
+  font-size: 26px;
+  margin: 0 0 6px;
+  letter-spacing: -0.3px;
+}
+
+.h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.lead {
+  margin: 0;
+  color: var(--muted);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.pillOk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(22, 163, 74, 0.35);
+  border-color: rgba(22, 163, 74, 0.35);
+  background: rgba(22, 163, 74, 0.12);
+  color: var(--ok);
+  font-size: 13px;
+}
+
+.pillBad {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(220, 38, 38, 0.35);
+  border-color: rgba(220, 38, 38, 0.35);
+  background: rgba(220, 38, 38, 0.12);
+  color: var(--bad);
+  font-size: 13px;
+}
+
+button {
+  font: inherit;
+}
+
+.primaryBtn,
+.secondaryBtn,
+.ghostBtn,
+.dangerBtn {
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  background: white;
+  cursor: pointer;
+}
+
+.primaryBtn {
+  border-color: rgba(124, 58, 237, 0.35);
+  background: rgba(124, 58, 237, 0.12);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.secondaryBtn {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.ghostBtn {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+  font-weight: 700;
+  padding: 8px 10px;
+}
+
+.dangerBtn {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.primaryBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.topicCard {
+  grid-column: span 12;
+  text-align: left;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.85);
+  padding: 12px;
+  cursor: pointer;
+}
+
+@media (min-width: 680px) {
+  .topicCard {
+    grid-column: span 6;
+  }
+}
+
+.topicTop {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.topicEmoji {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.1), rgba(34, 197, 94, 0.1));
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+}
+
+.topicTitle {
+  font-weight: 800;
+  letter-spacing: -0.2px;
+}
+
+.topicDesc {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.topicStats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.topicHeader {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.topicEmojiBig {
+  width: 60px;
+  height: 60px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.7);
+  display: grid;
+  place-items: center;
+  font-size: 32px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.listItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+}
+
+.listItemLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.badge,
+.badgeOk {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.badgeOk {
+  border-color: rgba(22, 163, 74, 0.35);
+  background: rgba(22, 163, 74, 0.12);
+  color: var(--ok);
+}
+
+.listTitle {
+  font-weight: 750;
+}
+
+.listSub {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.reading {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.readingPart {
+  border: 1px dashed rgba(15, 23, 42, 0.18);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.practice {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.practiceList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.practiceItem {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.practicePrompt {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.practiceRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.input {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  background: white;
+}
+
+.quizMeta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.quizList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.quizQ {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.quizPrompt {
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.quizOptions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+@media (min-width: 680px) {
+  .quizOptions {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.opt {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: white;
+  cursor: pointer;
+  text-align: center;
+}
+
+.optSelected {
+  border-color: rgba(124, 58, 237, 0.35);
+  background: rgba(124, 58, 237, 0.12);
+}
+
+.optRight {
+  border-color: rgba(22, 163, 74, 0.35);
+  background: rgba(22, 163, 74, 0.12);
+}
+
+.optWrong {
+  border-color: rgba(220, 38, 38, 0.35);
+  background: rgba(220, 38, 38, 0.12);
+}
+
+.hint {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+
+
+_________________________
+
+
+
+
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.tsx'
+import { registerSW } from 'virtual:pwa-register'
+
+registerSW({ immediate: true })
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+_________________________________________________--
+
+
+
+
+
+/// <reference types="vite/client" />
+/// <reference types="vite-plugin-pwa/client" />
+
+
+
+
